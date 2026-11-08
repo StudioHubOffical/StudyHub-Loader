@@ -284,7 +284,12 @@ function Controller:isValid()
 end
 function Controller:attach(callback)
     assert(self:isValid(), "Licenca sem sessao valida")
+    assert(type(callback) == "function", "Runtime sem encerramento valido")
     self.destroyHub = callback
+    -- A runtime may keep running after registering its UI and cleanup handle.
+    -- Readiness is independent from the return of the downloaded main function.
+    self.ready = true
+    gui.Enabled = false
 end
 function Controller:hubClosed()
     self:stop(nil, true)
@@ -524,14 +529,14 @@ local function launch(key)
     c.launchThread = task.spawn(function()
         local ok = pcall(fn)
         if not c.active then return end
-        if ok and c:isValid() then bindOriginal() end
-        if not ok or not c.destroyHub then
+        if c:isValid() then bindOriginal() end
+        if not ok then
             c:stop("A hub nao iniciou corretamente. Confira o runtime publicado.")
-        elseif c:isValid() then gui.Enabled = false end
-        busy = false
+        elseif c.ready and c:isValid() then gui.Enabled = false end
+        if c.ready or not c.active then busy = false end
     end)
     task.delay(120, function()
-        if c.active and gui.Enabled then c:stop("A inicializacao demorou demais. Tente novamente com o jogo carregado.") end
+        if c.active and not c.ready then c:stop("A inicializacao demorou demais. Tente novamente com o jogo carregado.") end
     end)
 end
 local function submit()
