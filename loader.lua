@@ -58,7 +58,10 @@ local function enabled()
     local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(path)) end)
     if not ok or type(data) ~= "table" or data.userId ~= userId then return false end
     local h = data.houses
-    return data.autoExecute == true or (originGameId == "7074860883" and type(h) == "table"
+    local guildReturn = originGameId == "7074860883" and type(data.guild) == "table" and type(data.guild.journey) == "table"
+        and data.guild.journey.phase == "return" and type(data.guild.journey.nextWorld) == "number"
+        and data.guild.journey.nextWorld >= 1 and data.guild.journey.nextWorld <= 3
+    return data.autoExecute == true or guildReturn or (originGameId == "7074860883" and type(h) == "table"
         and h.enabled == true and type(h.route) == "table" and type(h.route.nextWorld) == "number"
         and h.route.nextWorld >= 1 and h.route.nextWorld <= 3)
 end
@@ -390,7 +393,10 @@ local function enabled()
     local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(path)) end)
     if not ok or type(data) ~= "table" or data.userId ~= userId then return false end
     local h = data.houses
-    return data.autoExecute == true or (originGameId == "7074860883" and type(h) == "table"
+    local guildReturn = originGameId == "7074860883" and type(data.guild) == "table" and type(data.guild.journey) == "table"
+        and data.guild.journey.phase == "return" and type(data.guild.journey.nextWorld) == "number"
+        and data.guild.journey.nextWorld >= 1 and data.guild.journey.nextWorld <= 3
+    return data.autoExecute == true or guildReturn or (originGameId == "7074860883" and type(h) == "table"
         and h.enabled == true and type(h.route) == "table" and type(h.route.nextWorld) == "number"
         and h.route.nextWorld >= 1 and h.route.nextWorld <= 3)
 end
