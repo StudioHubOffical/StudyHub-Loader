@@ -59,6 +59,12 @@ function Policy.silentStartup(cache, gameId)
     return key ~= nil and type(cache.confirmedByGame) == "table"
         and cache.confirmedByGame[tostring(gameId)] == key
 end
+function Policy.bindingEpoch(cache, gameId, key)
+    local bindings = type(cache) == "table" and cache.bindingsByGame
+    local binding = type(bindings) == "table" and bindings[tostring(gameId)]
+    local epoch = type(binding) == "table" and binding.key == key and binding.epoch
+    if type(epoch) == "number" and epoch == math.floor(epoch) and epoch >= 1 and epoch < math.huge then return epoch end
+end
 return Policy
 
 end)()
@@ -359,6 +365,10 @@ function Controller:accept(reply, startedAt)
     if not timing then return false end
     self.token, self.deadline, self.renewAt = timing.token, timing.deadline, timing.renewAt
     self.licenseDeadline, self.licensePermanent = timing.licenseDeadline, timing.licensePermanent
+    if type(reply.recuperacao) == "string" and #reply.recuperacao >= 64 and #reply.recuperacao <= 2048
+        and reply.recuperacao:match("^R1%.") then self.recoveryProof = reply.recuperacao end
+    if type(reply.vinculo) == "number" and reply.vinculo >= 1 and reply.vinculo < math.huge
+        and reply.vinculo == math.floor(reply.vinculo) then self.bindingEpoch = reply.vinculo end
     return true
 end
 function Controller:getLicenseRemaining()
@@ -422,7 +432,7 @@ end
 -- END LOADER TRANSPORT
 local messages = {
     KEY_INVALIDA = "Key invalida.", KEY_REVOGADA = "Key revogada.", KEY_EXPIRADA = "Sua key expirou.",
-    DISPOSITIVO_INVALIDO = "Key vinculada a outro dispositivo. Use /resethwid no Discord.",
+    DISPOSITIVO_INVALIDO = "Dispositivo ou vinculo alterado. Valide manualmente; para trocar de aparelho, use /resethwid no Discord.",
     SESSAO_INVALIDA = "Sessao invalidada ou servidor reiniciado. Valide a key novamente.",
     MUITAS_TENTATIVAS = "Muitas tentativas. Aguarde um minuto.",
     JOGO_NAO_SUPORTADO = "Este jogo ainda nao tem uma hub cadastrada e ativa.",
@@ -430,6 +440,8 @@ local messages = {
     FALHA_AO_SALVAR = "O servidor nao conseguiu salvar. Tente novamente em instantes.",
     REDE_TIMEOUT = "O servidor demorou para responder. Tente validar novamente.",
     RESPOSTA_INVALIDA = "Resposta temporariamente invalida do servidor. Tente novamente.",
+    RECUPERACAO_INVALIDA = "A confirmacao da sessao venceu ou mudou. Valide manualmente para continuar.",
+    VALIDACAO_MANUAL = "Clique em Validar e entrar uma vez para confirmar o vinculo deste loader atualizado.",
 }
 local function problem(reply, fallback)
     return type(reply) == "table" and messages[reply.erro] or fallback
@@ -483,7 +495,36 @@ local function waitForGameReady()
     return false
 end
 -- END LOADER STARTUP
-local function launch(key)
+-- LOADER SESSION RECOVERY: never fall back to device-binding activation.
+local function recoverSession(c)
+    if type(c.recoveryProof) ~= "string" then
+        c:stop("Atualize o servidor de keys e valide manualmente uma vez para habilitar a recuperacao automatica.")
+        return false
+    end
+    for attempt = 1, 3 do
+        if not c:isValid() then return false end
+        local code, reply, _, began = post("/v1/recuperar", {key = c.key, userId = tostring(player.UserId),
+            dispositivo = c.device, gameId = tostring(game.GameId), recuperacao = c.recoveryProof}, function() return c:isValid() end)
+        if not c:isValid() then return false end
+        if code == 200 and type(reply) == "table" and reply.protocolo == 2 and type(reply.hub) == "table"
+            and reply.hub.id == (c.hubId or "arise") and c:accept(reply, began) then
+            if c.ready then gui.Enabled = false end
+            return true
+        end
+        if code == 404 then c:stop("Atualize o servidor no Render para habilitar a recuperacao automatica.") return false end
+        if Policy.classify(code, reply) ~= "retry" then
+            c:stop(problem(reply, "Nao foi possivel recuperar a sessao. Valide manualmente.")) return false
+        end
+        if attempt == 3 then break end
+        local untilAt = os.clock() + (code == 429 and 60 or attempt * 3)
+        while c:isValid() and os.clock() < untilAt do task.wait(0.25) end
+    end
+    if c:isValid() then c:stop("Nao foi possivel recuperar a sessao por falha de conexao. Tente novamente.") end
+    return false
+end
+-- END LOADER SESSION RECOVERY
+
+local function launch(key, automatic)
     if busy then return end
     busy = true
     button.Text, button.Active = "VALIDANDO...", false
@@ -501,13 +542,14 @@ local function launch(key)
     if not setupOK then busy = false show(tostring(setup)) return end
     local device = setup
     if not waitForGameReady() then busy = false show("O jogo ainda nao terminou de carregar. Tente validar novamente.") return end
+    local bindingEpoch = Policy.bindingEpoch(readJson("AriseStudyHub/license.json"), game.GameId, key)
     local resolveCode, resolved = startupPost("/v1/jogo", {gameId = tostring(game.GameId)})
     if resolveCode ~= 200 or type(resolved) ~= "table" or resolved.protocolo ~= 2 or type(resolved.hub) ~= "table" then
         busy = false
         show(problem(resolved, "Atualize o servidor para a versao MultiJogos ou tente novamente."))
         return
     end
-    local code, reply, _, startedAt = startupPost("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device, gameId = tostring(game.GameId)})
+    local code, reply, _, startedAt = startupPost("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device, gameId = tostring(game.GameId), automatico = automatic == true, vinculoEsperado = bindingEpoch})
     if not gui.Parent then busy = false return end
     local c = setmetatable({active = true, deadline = 0, renewAt = 0, device = device,
         gameId = tostring(game.GameId), hubId = resolved.hub.id}, Controller)
@@ -543,12 +585,16 @@ local function launch(key)
                 if result == "success" and c:accept(data, began) then
                     -- Updated only by a confirmed response.
                 elseif result == "retry" then c.renewAt = os.clock() + (httpCode == 429 and 60 or 10)
+                elseif result == "reauth" then recoverSession(c)
                 else c:stop(problem(data, "Falha na validacao da sessao. Valide sua key novamente.")) end
             end
         end
     end)
     status.Text = "Licenca validada. Carregando a hub..."
     local scriptCode, scriptReply, source = startupPost("/v1/script", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
+    if c:isValid() and Policy.classify(scriptCode, scriptReply) == "reauth" and recoverSession(c) then
+        scriptCode, scriptReply, source = startupPost("/v1/script", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
+    end
     if not c:isValid() then busy = false return end
     if scriptCode ~= 200 then
         c:stop(problem(scriptReply, "Nao foi possivel baixar a hub. Verifique a conexao e tente novamente."))
@@ -565,6 +611,10 @@ local function launch(key)
         cache.byGame = type(cache.byGame) == "table" and cache.byGame or {}
         cache.byGame[tostring(game.GameId)] = key
         cache.lastKey = key
+        if c.bindingEpoch then
+            cache.bindingsByGame = type(cache.bindingsByGame) == "table" and cache.bindingsByGame or {}
+            cache.bindingsByGame[tostring(game.GameId)] = {key = key, epoch = c.bindingEpoch}
+        end
         if c.hubId == "arise" then cache.key = key end
         writefile("AriseStudyHub/license.json", Http:JSONEncode(cache))
     end)
@@ -584,12 +634,12 @@ local function launch(key)
         if c.active and not c.ready then c:stop("A inicializacao demorou demais. Tente novamente com o jogo carregado.") end
     end)
 end
-local function submit()
+local function submit(automatic)
     local key = input.Text:gsub("%s", ""):upper()
     if not key:match("^%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x$") then
         show("Cole a key completa no formato XXXX-XXXX-XXXX-XXXX.") return
     end
-    local ok = pcall(launch, key)
+    local ok = pcall(launch, key, automatic == true)
     if not ok then
         busy = false
         local c = env.__StudyHubLicense
@@ -597,7 +647,7 @@ local function submit()
         else show("Falha ao carregar. Confira os arquivos locais e o servidor.") end
     end
 end
-button.Activated:Connect(submit)
+button.Activated:Connect(function() submit(false) end)
 input.FocusLost:Connect(function(enter) if enter then submit() end end)
 gui.Destroying:Connect(function()
     local c = env.__StudyHubLicense
@@ -608,7 +658,7 @@ gui.Enabled = not Policy.silentStartup(readJson("AriseStudyHub/license.json"), g
 if cachedKey then
     input.Text = cachedKey
     status.Text = "Key salva encontrada. Validando automaticamente..."
-    task.defer(submit)
+    task.defer(function() submit(true) end)
 elseif resume == true then
     status.Text = "Nao foi possivel ler uma key salva. Cole a key para continuar."
 end
