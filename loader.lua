@@ -54,6 +54,11 @@ function Policy.savedKey(cache, gameId)
     end
     return nil
 end
+function Policy.silentStartup(cache, gameId)
+    local key = Policy.savedKey(cache, gameId)
+    return key ~= nil and type(cache.confirmedByGame) == "table"
+        and cache.confirmedByGame[tostring(gameId)] == key
+end
 return Policy
 
 end)()
@@ -143,9 +148,11 @@ env.__AriseAutoSession = nil
 local oldUI = env.__StudyHubKeyGui
 if oldUI then pcall(function() oldUI:Destroy() end) end
 
--- LOADER VISUAL-1
+-- LOADER SILENT-1
 local gui = Instance.new("ScreenGui")
 gui.Name, gui.ResetOnSpawn, gui.DisplayOrder = "StudyHubKey", false, 11000
+-- Decide whether to show before parenting: saved-key checks must not flash on screen.
+gui.Enabled = false
 gui.Parent = (gethui and gethui()) or player:WaitForChild("PlayerGui")
 env.__StudyHubKeyGui = gui
 local cyan = Color3.fromRGB(0, 213, 222)
@@ -158,6 +165,16 @@ local function create(class, parent, props)
 end
 local function round(object, radius)
     create("UICorner", object, {CornerRadius = UDim.new(0, radius)})
+end
+local function artwork(parent, name, asset, x, y, width, height)
+    return create("ImageLabel", parent, {Name = name, Image = "rbxassetid://" .. asset,
+        Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(width, height),
+        BackgroundTransparency = 1, Active = false, Visible = true, ScaleType = Enum.ScaleType.Fit})
+end
+local function hideFallbackWhenLoaded(image, fallback)
+    local function update() fallback.Visible = not image.IsLoaded end
+    image:GetPropertyChangedSignal("IsLoaded"):Connect(update)
+    update()
 end
 local panel = create("Frame", gui, {Size = UDim2.fromOffset(460, 460),
     Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
@@ -181,7 +198,9 @@ end
 local logo = create("Frame", panel, {Position = UDim2.fromOffset(24, 23), Size = UDim2.fromOffset(44, 44),
     BackgroundColor3 = Color3.fromRGB(11, 43, 59), BorderSizePixel = 0})
 round(logo, 10)
-label(logo, "S", 0, 0, 44, 44, 31, cyan, true)
+local logoFallback = label(logo, "S", 0, 0, 44, 44, 31, cyan, true)
+local logoArt = artwork(logo, "StudyHubLogo", "128145399327530", 0, 0, 44, 44)
+hideFallbackWhenLoaded(logoArt, logoFallback)
 local title = label(panel, "STUDY HUB", 82, 23, 210, 25, 21, nil, true)
 title.TextXAlignment = Enum.TextXAlignment.Left
 local subtitle = label(panel, "A C E S S O", 83, 49, 200, 15, 10, muted)
@@ -203,7 +222,9 @@ local inputBox = create("Frame", panel, {Position = UDim2.fromOffset(24, 222), S
     BackgroundColor3 = Color3.fromRGB(12, 34, 51), BorderSizePixel = 0})
 round(inputBox, 9)
 create("UIStroke", inputBox, {Color = Color3.fromRGB(34, 73, 93), Thickness = 1})
-label(inputBox, "KEY", 10, 0, 38, 52, 10, cyan, true)
+local keyFallback = label(inputBox, "KEY", 10, 0, 38, 52, 10, cyan, true)
+local keyArt = artwork(inputBox, "LicenseKeyIcon", "100690696575933", 14, 11, 30, 30)
+hideFallbackWhenLoaded(keyArt, keyFallback)
 local input = create("TextBox", inputBox, {Position = UDim2.fromOffset(52, 0), Size = UDim2.new(1, -104, 1, 0),
     Text = "", PlaceholderText = "Cole sua key", ClearTextOnFocus = false,
     BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(232, 243, 249),
@@ -226,13 +247,20 @@ local slash = create("Frame", eye, {Position = UDim2.fromOffset(4, 17), Size = U
     Rotation = -40, BackgroundColor3 = cyan, BorderSizePixel = 0})
 local preferences = readJson("AriseStudyHub/loader-ui.json") or {}
 local hideKey = preferences.hideKey ~= false
+local eyeOpenArt = artwork(eye, "ShowKeyIcon", "123741328806608", 2, 2, 32, 32)
+local eyeHiddenArt = artwork(eye, "HideKeyIcon", "121852765919539", 2, 2, 32, 32)
 local function updateKeyMask()
     input.TextTransparency = hideKey and 1 or 0
     mask.Visible = hideKey and #input.Text > 0
     mask.Text = string.rep("•", math.min(#input.Text, 24))
-    slash.Visible = hideKey
+    eyeOpenArt.Visible, eyeHiddenArt.Visible = not hideKey, hideKey
+    local loaded = (hideKey and eyeHiddenArt or eyeOpenArt).IsLoaded
+    eyeOval.Visible = not loaded
+    slash.Visible = hideKey and not loaded
 end
 input:GetPropertyChangedSignal("Text"):Connect(updateKeyMask)
+eyeOpenArt:GetPropertyChangedSignal("IsLoaded"):Connect(updateKeyMask)
+eyeHiddenArt:GetPropertyChangedSignal("IsLoaded"):Connect(updateKeyMask)
 updateKeyMask()
 local button = create("TextButton", panel, {Position = UDim2.fromOffset(24, 289), Size = UDim2.fromOffset(412, 48),
     Text = "VALIDAR E ENTRAR", Font = Enum.Font.GothamBold, TextSize = 14,
@@ -259,6 +287,8 @@ for _, x in ipairs({6, 15}) do
         BackgroundColor3 = Color3.fromRGB(7, 20, 33), BorderSizePixel = 0})
     round(dot, 4)
 end
+local discordArt = artwork(discord, "DiscordIcon", "134120255785711", 2, 0, 32, 28)
+hideFallbackWhenLoaded(discordArt, discordIcon)
 label(discord, "Obter key", 37, 0, 105, 28, 13, cyan, true)
 local DISCORD_INVITE = "https://discord.gg/g8bEFs2Pee"
 discord.Activated:Connect(function()
@@ -288,6 +318,17 @@ function Controller:attach(callback)
     self.destroyHub = callback
     -- A runtime may keep running after registering its UI and cleanup handle.
     -- Readiness is independent from the return of the downloaded main function.
+    if not self.ready then
+        -- Only a runtime that actually registered may enable quiet future starts.
+        -- This local preference never grants a license; every start still calls the server.
+        pcall(function()
+            local cache = readJson("AriseStudyHub/license.json")
+            if type(cache) ~= "table" or Policy.savedKey(cache, game.GameId) ~= self.key then return end
+            cache.confirmedByGame = type(cache.confirmedByGame) == "table" and cache.confirmedByGame or {}
+            cache.confirmedByGame[tostring(game.GameId)] = self.key
+            writefile("AriseStudyHub/license.json", Http:JSONEncode(cache))
+        end)
+    end
     self.ready = true
     gui.Enabled = false
 end
@@ -405,6 +446,7 @@ local function startupPost(route, body, canContinue)
         lastCode, lastReply, lastRaw, lastStart = code, reply, raw, started
         if not allowed() then break end
         env.__StudyHubLoaderStatus.status = code
+        if Policy.classify(code, reply) == "retry" then gui.Enabled = true end
         if Policy.classify(code, reply) ~= "retry" or attempt == 3 then return code, reply, raw, started end
         local pause = code == 429 and math.max(60, retryAfter or 60) or attempt * 3
         if os.clock() + pause - began >= 150 then break end
@@ -468,6 +510,7 @@ local function launch(key)
     local c = setmetatable({active = true, deadline = 0, renewAt = 0, device = device,
         gameId = tostring(game.GameId), hubId = resolved.hub.id}, Controller)
     env.__StudyHubLicense = c
+    c.key = key
     if code ~= 200 or type(reply) ~= "table" or reply.protocolo ~= 2 or type(reply.hub) ~= "table"
         or reply.hub.id ~= c.hubId or not c:accept(reply, startedAt) then
         c:stop(problem(reply, "Nao foi possivel validar. Verifique o servidor e tente novamente."))
@@ -559,6 +602,7 @@ gui.Destroying:Connect(function()
     if c then c:stop(nil, true) end
 end)
 local cachedKey = Policy.savedKey(readJson("AriseStudyHub/license.json"), game.GameId)
+gui.Enabled = not Policy.silentStartup(readJson("AriseStudyHub/license.json"), game.GameId)
 if cachedKey then
     input.Text = cachedKey
     status.Text = "Key salva encontrada. Validando automaticamente..."
