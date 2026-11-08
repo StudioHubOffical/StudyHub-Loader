@@ -1,4 +1,4 @@
--- Study Hub: tela de key primeiro; hub completa entregue pelo servidor.
+-- StudyHub MultiJogos: carregamento autorizado pelo servidor.
 assert(type(readfile)=="function" and type(writefile)=="function", "Executor sem arquivos locais")
 if type(makefolder)=="function" then pcall(makefolder,"AriseStudyHub") end
 local source=[=====[
@@ -43,50 +43,40 @@ return Policy
 
 end)()
 local bootstrap = [====[
-local userId, resume = ...
+local userId, resume, originGameId = ...
 if not game:IsLoaded() then game.Loaded:Wait() end
 local player = game:GetService("Players").LocalPlayer
 while not player do task.wait() player = game:GetService("Players").LocalPlayer end
 if player.UserId ~= userId then return nil end
+originGameId = tostring(originGameId or game.GameId)
 local env = getgenv()
 local function enabled()
-    local ok, data = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(readfile("AriseStudyHub/" .. userId .. ".json"))
-    end)
+    local path = originGameId == "7074860883" and ("AriseStudyHub/" .. userId .. ".json")
+        or ("AriseStudyHub/Profiles/" .. originGameId .. "_" .. userId .. ".json")
+    local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(path)) end)
     if not ok or type(data) ~= "table" or data.userId ~= userId then return false end
     local h = data.houses
-    return data.autoExecute == true or (type(h) == "table" and h.enabled == true
-        and type(h.route) == "table" and type(h.route.nextWorld) == "number"
+    return data.autoExecute == true or (originGameId == "7074860883" and type(h) == "table"
+        and h.enabled == true and type(h.route) == "table" and type(h.route.nextWorld) == "number"
         and h.route.nextWorld >= 1 and h.route.nextWorld <= 3)
 end
 if not enabled() then return nil end
 local old = env.__AriseAutoSession
-if old and old.version == "licensed-1" then return old end
+if old and old.version == "multi-1" and old.originGameId == originGameId then return old end
 if old and old.connection then old.connection:Disconnect() end
 local queue = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
 if type(queue) ~= "function" then return nil end
-local session = {version = "licensed-1", queued = false}
+local session = {version = "multi-1", originGameId = originGameId, queued = false}
 env.__AriseAutoSession = session
 function session.arm()
     if session.queued or not enabled() then return end
     local auth = env.__StudyHubLicense
     if auth and not auth:isValid() then return end
-    local source = string.format('local f = assert(loadstring(readfile("AriseStudyHub/AutoExecute.luau"))); f(%s, true)', tostring(userId))
+    local source = string.format('assert(loadstring(readfile("AriseStudyHub/AutoExecute.luau")))(%s, true, %q)', tostring(userId), originGameId)
     local ok, problem = pcall(queue, source)
     session.queued, session.problem = ok, not ok and tostring(problem) or nil
 end
-if resume then
-    -- Unsupported games keep the queued chain, but never download or execute the hub.
-    session.arm()
-    if game.GameId == 7074860883 and enabled() then
-        local ok, problem = pcall(function()
-            assert(loadstring(readfile("AriseStudyHub/Loader.luau")))(true)
-        end)
-        if not ok then warn("[StudyHub] Nao foi possivel abrir o loader: " .. tostring(problem)) end
-    end
-else
-    session.arm()
-end
+session.arm()
 session.connection = player.OnTeleport:Connect(function(status)
     if status == Enum.TeleportState.Failed then session.queued = false session.arm() return end
     if status == Enum.TeleportState.Started then
@@ -94,6 +84,13 @@ session.connection = player.OnTeleport:Connect(function(status)
         session.arm()
     end
 end)
+if resume and env.__StudyHubResumeJob ~= game.JobId then
+    env.__StudyHubResumeJob = game.JobId
+    local ok, problem = pcall(function()
+        assert(loadstring(readfile("AriseStudyHub/Loader.luau")))(true)
+    end)
+    if not ok then warn("[StudyHub] Nao foi possivel abrir o loader: " .. tostring(problem)) end
+end
 return session
 ]====]
 local requestHttp = request or http_request or (syn and syn.request) or (http and http.request)
@@ -118,6 +115,8 @@ local function getDevice()
 end
 local old = env.__StudyHubLicense
 if old and type(old.stop) == "function" then old:stop(nil, true) end
+local previousOther = env.__StudyHubRuntime
+if previousOther and type(previousOther.destroy) == "function" then pcall(previousOther.destroy) end
 local previous = env.__AriseStudyHub
 if previous and type(previous.destroy) == "function" then pcall(previous.destroy) end
 local previousAuto = env.__AriseAutoSession
@@ -201,6 +200,22 @@ function Controller:accept(reply, startedAt)
     self.token, self.deadline, self.renewAt = timing.token, timing.deadline, timing.renewAt
     return true
 end
+function Controller:setAutoExecute(enabled)
+    if self.hubId == "arise" then error("Use a opcao Misc da hub Arise") end
+    assert(self:isValid(), "Sessao encerrada")
+    assert(type(enabled) == "boolean", "Opcao invalida")
+    if type(makefolder) == "function" then pcall(makefolder, "AriseStudyHub/Profiles") end
+    local path = "AriseStudyHub/Profiles/" .. self.gameId .. "_" .. player.UserId .. ".json"
+    local profile = readJson(path) or {}
+    profile.userId, profile.autoExecute = player.UserId, enabled
+    writefile(path, Http:JSONEncode(profile))
+    if enabled then
+        return assert(loadstring(readfile("AriseStudyHub/AutoExecute.luau")))(player.UserId, false, self.gameId)
+    end
+    local oldSession = env.__AriseAutoSession
+    if oldSession and oldSession.connection then oldSession.connection:Disconnect() end
+    env.__AriseAutoSession = nil
+end
 local function post(route, body)
     local startedAt = os.clock()
     local ok, response = pcall(requestHttp, {Url = BASE .. route, Method = "POST",
@@ -221,6 +236,8 @@ local messages = {
     DISPOSITIVO_INVALIDO = "Key vinculada a outro dispositivo. Use /resethwid no Discord.",
     SESSAO_INVALIDA = "Sessao invalidada ou servidor reiniciado. Valide a key novamente.",
     MUITAS_TENTATIVAS = "Muitas tentativas. Aguarde um minuto.",
+    JOGO_NAO_SUPORTADO = "Este jogo ainda nao tem uma hub cadastrada e ativa.",
+    HUB_SEM_ACESSO = "Sua key nao inclui acesso a esta hub. Consulte a equipe no Discord.",
     FALHA_AO_SALVAR = "O servidor nao conseguiu salvar. Tente novamente em instantes.",
 }
 local function problem(reply, fallback)
@@ -232,7 +249,6 @@ local function launch(key)
     button.Text, button.Active = "VALIDANDO...", false
     status.Text = "Conectando ao servidor de licencas..."
     local setupOK, setup = pcall(function()
-        assert(game.GameId == 7074860883, "Esta versao suporta apenas Arise Crossover.")
         assert(type(requestHttp) == "function", "Executor sem suporte a requisicoes POST.")
         assert(type(readfile) == "function" and type(writefile) == "function", "Executor sem arquivos locais.")
         if type(makefolder) == "function" then pcall(makefolder, "AriseStudyHub") end
@@ -244,23 +260,32 @@ local function launch(key)
     end)
     if not setupOK then busy = false show(tostring(setup)) return end
     local device = setup
-    local code, reply, _, startedAt = post("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device})
+    local resolveCode, resolved = post("/v1/jogo", {gameId = tostring(game.GameId)})
+    if resolveCode ~= 200 or type(resolved) ~= "table" or resolved.protocolo ~= 2 or type(resolved.hub) ~= "table" then
+        busy = false
+        show(problem(resolved, "Atualize o servidor para a versao MultiJogos ou tente novamente."))
+        return
+    end
+    local code, reply, _, startedAt = post("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device, gameId = tostring(game.GameId)})
     if not gui.Parent then busy = false return end
-    local c = setmetatable({active = true, deadline = 0, renewAt = 0, device = device}, Controller)
+    local c = setmetatable({active = true, deadline = 0, renewAt = 0, device = device,
+        gameId = tostring(game.GameId), hubId = resolved.hub.id}, Controller)
     env.__StudyHubLicense = c
-    if code ~= 200 or not c:accept(reply, startedAt) then
+    if code ~= 200 or type(reply) ~= "table" or reply.protocolo ~= 2 or type(reply.hub) ~= "table"
+        or reply.hub.id ~= c.hubId or not c:accept(reply, startedAt) then
         c:stop(problem(reply, "Nao foi possivel validar. Verifique o servidor e tente novamente."))
         busy = false return
     end
     local function bindOriginal()
-        local hub = env.__AriseStudyHub
+        local slot = c.hubId == "arise" and "__AriseStudyHub" or "__StudyHubRuntime"
+        local hub = env[slot]
         if hub and type(hub.destroy) == "function" and not c.boundHub then
-            c.boundHub = hub
+            c.boundHub, c.hubSlot = hub, slot
             c:attach(function() hub.destroy() end)
         end
     end
     c.watch = RunService.Heartbeat:Connect(function()
-        if c.boundHub and env.__AriseStudyHub ~= c.boundHub then c:stop(nil, true) return end
+        if c.boundHub and env[c.hubSlot] ~= c.boundHub then c:stop(nil, true) return end
         if c:isValid() then bindOriginal() end
         if not c:isValid() then c:stop("Autorizacao vencida sem renovacao. Valide sua key novamente.") end
     end)
@@ -289,7 +314,14 @@ local function launch(key)
     end
     local fn = loadstring(source, "StudyHubLicensed")
     if not fn then c:stop("O script recebido tem erro de compilacao.") busy = false return end
-    local saved = pcall(function() writefile("AriseStudyHub/license.json", Http:JSONEncode({key = key})) end)
+    local saved = pcall(function()
+        local cache = readJson("AriseStudyHub/license.json") or {}
+        cache.byGame = type(cache.byGame) == "table" and cache.byGame or {}
+        cache.byGame[tostring(game.GameId)] = key
+        cache.lastKey = key
+        if c.hubId == "arise" then cache.key = key end
+        writefile("AriseStudyHub/license.json", Http:JSONEncode(cache))
+    end)
     if not saved then c:stop("Nao foi possivel salvar a key para continuidade por teleporte.") busy = false return end
     -- Only needed by the hub's existing capability check. Never store the downloaded runtime locally.
     writefile("AriseStudyHub/Hub.luau", '-- Runtime servido exclusivamente pelo loader.\nerror("Use StudyHub_Loader.luau")')
@@ -326,55 +358,48 @@ gui.Destroying:Connect(function()
     if c then c:stop(nil, true) end
 end)
 local cached = readJson("AriseStudyHub/license.json")
-if cached and type(cached.key) == "string" then input.Text = cached.key end
-if resume == true and cached then task.spawn(submit) end
+local cachedKey = cached and type(cached.byGame) == "table" and cached.byGame[tostring(game.GameId)]
+if not cachedKey and game.GameId == 7074860883 then cachedKey = cached and cached.key end
+if not cachedKey then cachedKey = cached and (cached.lastKey or cached.key) end
+if type(cachedKey) == "string" then input.Text = cachedKey end
+if resume == true and type(cachedKey) == "string" then task.spawn(submit) end
 ]=====]
 writefile("AriseStudyHub/Loader.luau",source)
 writefile("AriseStudyHub/AutoExecute.luau",[====[
-local userId, resume = ...
+local userId, resume, originGameId = ...
 if not game:IsLoaded() then game.Loaded:Wait() end
 local player = game:GetService("Players").LocalPlayer
 while not player do task.wait() player = game:GetService("Players").LocalPlayer end
 if player.UserId ~= userId then return nil end
+originGameId = tostring(originGameId or game.GameId)
 local env = getgenv()
 local function enabled()
-    local ok, data = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(readfile("AriseStudyHub/" .. userId .. ".json"))
-    end)
+    local path = originGameId == "7074860883" and ("AriseStudyHub/" .. userId .. ".json")
+        or ("AriseStudyHub/Profiles/" .. originGameId .. "_" .. userId .. ".json")
+    local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(path)) end)
     if not ok or type(data) ~= "table" or data.userId ~= userId then return false end
     local h = data.houses
-    return data.autoExecute == true or (type(h) == "table" and h.enabled == true
-        and type(h.route) == "table" and type(h.route.nextWorld) == "number"
+    return data.autoExecute == true or (originGameId == "7074860883" and type(h) == "table"
+        and h.enabled == true and type(h.route) == "table" and type(h.route.nextWorld) == "number"
         and h.route.nextWorld >= 1 and h.route.nextWorld <= 3)
 end
 if not enabled() then return nil end
 local old = env.__AriseAutoSession
-if old and old.version == "licensed-1" then return old end
+if old and old.version == "multi-1" and old.originGameId == originGameId then return old end
 if old and old.connection then old.connection:Disconnect() end
 local queue = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
 if type(queue) ~= "function" then return nil end
-local session = {version = "licensed-1", queued = false}
+local session = {version = "multi-1", originGameId = originGameId, queued = false}
 env.__AriseAutoSession = session
 function session.arm()
     if session.queued or not enabled() then return end
     local auth = env.__StudyHubLicense
     if auth and not auth:isValid() then return end
-    local source = string.format('local f = assert(loadstring(readfile("AriseStudyHub/AutoExecute.luau"))); f(%s, true)', tostring(userId))
+    local source = string.format('assert(loadstring(readfile("AriseStudyHub/AutoExecute.luau")))(%s, true, %q)', tostring(userId), originGameId)
     local ok, problem = pcall(queue, source)
     session.queued, session.problem = ok, not ok and tostring(problem) or nil
 end
-if resume then
-    -- Unsupported games keep the queued chain, but never download or execute the hub.
-    session.arm()
-    if game.GameId == 7074860883 and enabled() then
-        local ok, problem = pcall(function()
-            assert(loadstring(readfile("AriseStudyHub/Loader.luau")))(true)
-        end)
-        if not ok then warn("[StudyHub] Nao foi possivel abrir o loader: " .. tostring(problem)) end
-    end
-else
-    session.arm()
-end
+session.arm()
 session.connection = player.OnTeleport:Connect(function(status)
     if status == Enum.TeleportState.Failed then session.queued = false session.arm() return end
     if status == Enum.TeleportState.Started then
@@ -382,6 +407,13 @@ session.connection = player.OnTeleport:Connect(function(status)
         session.arm()
     end
 end)
+if resume and env.__StudyHubResumeJob ~= game.JobId then
+    env.__StudyHubResumeJob = game.JobId
+    local ok, problem = pcall(function()
+        assert(loadstring(readfile("AriseStudyHub/Loader.luau")))(true)
+    end)
+    if not ok then warn("[StudyHub] Nao foi possivel abrir o loader: " .. tostring(problem)) end
+end
 return session
 ]====])
 assert(readfile("AriseStudyHub/Loader.luau")==source,"Falha ao salvar loader")
