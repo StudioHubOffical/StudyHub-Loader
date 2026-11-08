@@ -28,6 +28,8 @@ function Policy.accept(reply, startedAt, now)
     local deadline = startedAt + remaining / 1000
     if deadline <= now then return nil end
     return {token = reply.sessao, deadline = deadline,
+        licenseDeadline = license and (startedAt + license / 1000) or nil,
+        licensePermanent = license == nil,
         renewAt = math.min(now + 60, deadline - 1)}
 end
 function Policy.classify(status, reply)
@@ -198,7 +200,16 @@ function Controller:accept(reply, startedAt)
     local timing = Policy.accept(reply, startedAt, os.clock())
     if not timing then return false end
     self.token, self.deadline, self.renewAt = timing.token, timing.deadline, timing.renewAt
+    self.licenseDeadline, self.licensePermanent = timing.licenseDeadline, timing.licensePermanent
     return true
+end
+function Controller:getLicenseRemaining()
+    if not self:isValid() then return 0, "expired" end
+    if self.licensePermanent then return nil, "permanent" end
+    if type(self.licenseDeadline) == "number" then
+        return math.max(0, self.licenseDeadline - os.clock()), "timed"
+    end
+    return nil, "unknown"
 end
 function Controller:setAutoExecute(enabled)
     if self.hubId == "arise" then error("Use a opcao Misc da hub Arise") end
