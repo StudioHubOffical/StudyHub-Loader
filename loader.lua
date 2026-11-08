@@ -143,45 +143,139 @@ env.__AriseAutoSession = nil
 local oldUI = env.__StudyHubKeyGui
 if oldUI then pcall(function() oldUI:Destroy() end) end
 
+-- LOADER VISUAL-1
 local gui = Instance.new("ScreenGui")
 gui.Name, gui.ResetOnSpawn, gui.DisplayOrder = "StudyHubKey", false, 11000
 gui.Parent = (gethui and gethui()) or player:WaitForChild("PlayerGui")
 env.__StudyHubKeyGui = gui
-local panel = Instance.new("Frame")
-panel.Size, panel.Position, panel.AnchorPoint = UDim2.fromOffset(370, 240), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5)
-panel.BackgroundColor3, panel.BorderSizePixel, panel.Parent = Color3.fromRGB(8, 20, 31), 0, gui
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
-local scale = Instance.new("UIScale", panel)
+local cyan = Color3.fromRGB(0, 213, 222)
+local muted = Color3.fromRGB(140, 164, 183)
+local function create(class, parent, props)
+    local object = Instance.new(class)
+    for k, v in pairs(props) do object[k] = v end
+    object.Parent = parent
+    return object
+end
+local function round(object, radius)
+    create("UICorner", object, {CornerRadius = UDim.new(0, radius)})
+end
+local panel = create("Frame", gui, {Size = UDim2.fromOffset(460, 460),
+    Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(7, 20, 33), BorderSizePixel = 0})
+round(panel, 18)
+create("UIStroke", panel, {Color = Color3.fromRGB(25, 98, 117), Thickness = 1, Transparency = 0.2})
+local scale = create("UIScale", panel, {Scale = 1})
 local function fit()
     local camera = workspace.CurrentCamera
-    if camera then scale.Scale = math.min(1, (camera.ViewportSize.X - 24) / 370, (camera.ViewportSize.Y - 24) / 240) end
+    if camera then scale.Scale = math.max(0.1, math.min(1, (camera.ViewportSize.X - 24) / 460, (camera.ViewportSize.Y - 24) / 460)) end
 end
 fit()
-local function text(class, y, height, value)
-    local item = Instance.new(class)
-    item.Size, item.Position = UDim2.new(1, -32, 0, height), UDim2.fromOffset(16, y)
-    item.BackgroundTransparency, item.TextColor3 = 1, Color3.fromRGB(230, 240, 246)
-    item.Font, item.TextSize, item.Text, item.Parent = Enum.Font.Gotham, 14, value, panel
-    return item
+local fitConnection = RunService.Heartbeat:Connect(fit)
+gui.Destroying:Connect(function() fitConnection:Disconnect() end)
+local function label(parent, value, x, y, width, height, size, color, bold)
+    return create("TextLabel", parent, {Text = value, Position = UDim2.fromOffset(x, y),
+        Size = UDim2.fromOffset(width, height), BackgroundTransparency = 1,
+        TextColor3 = color or Color3.fromRGB(232, 243, 249), TextSize = size,
+        Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham})
 end
-local title = text("TextLabel", 14, 30, "STUDY HUB  |  ACESSO")
-title.Font = Enum.Font.GothamBold
-local input = text("TextBox", 57, 42, "")
-input.PlaceholderText, input.ClearTextOnFocus, input.BackgroundTransparency = "Cole sua key", false, 0
-input.BackgroundColor3 = Color3.fromRGB(15, 35, 50)
-Instance.new("UICorner", input).CornerRadius = UDim.new(0, 7)
-local button = text("TextButton", 111, 40, "VALIDAR KEY")
-button.BackgroundTransparency, button.BackgroundColor3 = 0, Color3.fromRGB(0, 173, 184)
-button.Font = Enum.Font.GothamBold
-Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
-local status = text("TextLabel", 159, 61, "O prazo comeca no primeiro uso. Reset de dispositivo pelo Discord.")
-status.TextWrapped, status.TextSize = true, 12
+local logo = create("Frame", panel, {Position = UDim2.fromOffset(24, 23), Size = UDim2.fromOffset(44, 44),
+    BackgroundColor3 = Color3.fromRGB(11, 43, 59), BorderSizePixel = 0})
+round(logo, 10)
+label(logo, "S", 0, 0, 44, 44, 31, cyan, true)
+local title = label(panel, "STUDY HUB", 82, 23, 210, 25, 21, nil, true)
+title.TextXAlignment = Enum.TextXAlignment.Left
+local subtitle = label(panel, "A C E S S O", 83, 49, 200, 15, 10, muted)
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+local close = create("TextButton", panel, {Position = UDim2.fromOffset(403, 25), Size = UDim2.fromOffset(32, 32),
+    Text = "×", TextSize = 25, Font = Enum.Font.Gotham, TextColor3 = muted,
+    BackgroundColor3 = Color3.fromRGB(12, 34, 50), BorderSizePixel = 0})
+round(close, 8)
+close.Activated:Connect(function() gui:Destroy() end)
+create("Frame", panel, {Position = UDim2.fromOffset(24, 83), Size = UDim2.fromOffset(412, 1),
+    BackgroundColor3 = Color3.fromRGB(28, 58, 76), BorderSizePixel = 0})
+local gameBadge = label(panel, game.GameId == 7074860883 and "ARISE CROSSOVER" or "STUDY HUB · MULTIJOGOS", 130, 101, 200, 24, 11, cyan, true)
+gameBadge.BackgroundTransparency = 0
+gameBadge.BackgroundColor3 = Color3.fromRGB(10, 39, 52)
+round(gameBadge, 6)
+label(panel, "Bem-vindo à Study Hub", 24, 141, 412, 30, 23, nil, true)
+label(panel, "Valide sua key para acessar a hub.", 24, 179, 412, 22, 13, muted)
+local inputBox = create("Frame", panel, {Position = UDim2.fromOffset(24, 222), Size = UDim2.fromOffset(412, 52),
+    BackgroundColor3 = Color3.fromRGB(12, 34, 51), BorderSizePixel = 0})
+round(inputBox, 9)
+create("UIStroke", inputBox, {Color = Color3.fromRGB(34, 73, 93), Thickness = 1})
+label(inputBox, "KEY", 10, 0, 38, 52, 10, cyan, true)
+local input = create("TextBox", inputBox, {Position = UDim2.fromOffset(52, 0), Size = UDim2.new(1, -104, 1, 0),
+    Text = "", PlaceholderText = "Cole sua key", ClearTextOnFocus = false,
+    BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(232, 243, 249),
+    PlaceholderColor3 = muted, TextSize = 14, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left})
+-- Display-only mask: authentication always reads the unchanged TextBox.Text.
+local mask = label(inputBox, "", 52, 0, 300, 52, 14)
+mask.Size = input.Size
+mask.TextXAlignment = Enum.TextXAlignment.Left
+mask.Active, mask.ZIndex = false, input.ZIndex + 1
+local eye = create("TextButton", inputBox, {Position = UDim2.new(1, -46, 0, 8), Size = UDim2.fromOffset(36, 36),
+    Text = "", BackgroundTransparency = 1})
+local eyeOval = create("Frame", eye, {Position = UDim2.fromOffset(7, 11), Size = UDim2.fromOffset(22, 14),
+    BackgroundTransparency = 1, BorderSizePixel = 0})
+round(eyeOval, 12)
+create("UIStroke", eyeOval, {Color = muted, Thickness = 1.5})
+local pupil = create("Frame", eyeOval, {Position = UDim2.fromOffset(8, 4), Size = UDim2.fromOffset(6, 6),
+    BackgroundColor3 = muted, BorderSizePixel = 0})
+round(pupil, 8)
+local slash = create("Frame", eye, {Position = UDim2.fromOffset(4, 17), Size = UDim2.fromOffset(28, 2),
+    Rotation = -40, BackgroundColor3 = cyan, BorderSizePixel = 0})
+local preferences = readJson("AriseStudyHub/loader-ui.json") or {}
+local hideKey = preferences.hideKey ~= false
+local function updateKeyMask()
+    input.TextTransparency = hideKey and 1 or 0
+    mask.Visible = hideKey and #input.Text > 0
+    mask.Text = string.rep("•", math.min(#input.Text, 24))
+    slash.Visible = hideKey
+end
+input:GetPropertyChangedSignal("Text"):Connect(updateKeyMask)
+updateKeyMask()
+local button = create("TextButton", panel, {Position = UDim2.fromOffset(24, 289), Size = UDim2.fromOffset(412, 48),
+    Text = "VALIDAR E ENTRAR", Font = Enum.Font.GothamBold, TextSize = 14,
+    TextColor3 = Color3.fromRGB(1, 24, 35), BackgroundColor3 = cyan, BorderSizePixel = 0})
+round(button, 9)
+local status = label(panel, "O prazo começa no primeiro uso da key.", 24, 347, 412, 37, 11, muted)
+status.TextWrapped = true
+eye.Activated:Connect(function()
+    hideKey = not hideKey
+    updateKeyMask()
+    local saved = pcall(function()
+        if type(makefolder) == "function" then pcall(makefolder, "AriseStudyHub") end
+        writefile("AriseStudyHub/loader-ui.json", Http:JSONEncode({hideKey = hideKey}))
+    end)
+    if not saved then status.Text = "Preferência aplicada nesta sessão; não foi possível salvar." end
+end)
+local discord = create("TextButton", panel, {Position = UDim2.fromOffset(156, 391), Size = UDim2.fromOffset(148, 28),
+    Text = "", BackgroundTransparency = 1})
+local discordIcon = create("Frame", discord, {Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(24, 16),
+    BackgroundColor3 = Color3.fromRGB(116, 137, 247), BorderSizePixel = 0})
+round(discordIcon, 6)
+for _, x in ipairs({6, 15}) do
+    local dot = create("Frame", discordIcon, {Position = UDim2.fromOffset(x, 6), Size = UDim2.fromOffset(4, 5),
+        BackgroundColor3 = Color3.fromRGB(7, 20, 33), BorderSizePixel = 0})
+    round(dot, 4)
+end
+label(discord, "Obter key", 37, 0, 105, 28, 13, cyan, true)
+local DISCORD_INVITE = "https://discord.gg/g8bEFs2Pee"
+discord.Activated:Connect(function()
+    local opened = pcall(function() game:GetService("GuiService"):OpenBrowserWindow(DISCORD_INVITE) end)
+    if opened then status.Text = "Convite do Discord aberto."
+    elseif type(setclipboard) == "function" and pcall(setclipboard, DISCORD_INVITE) then
+        status.Text = "Convite copiado. Cole no navegador ou no Discord."
+    else status.Text = DISCORD_INVITE end
+end)
+label(panel, "Sua key salva será validada automaticamente.", 24, 426, 412, 16, 10, muted)
 local function show(message)
     if not gui.Parent then return end
     gui.Enabled = true
     status.Text = message
-    button.Text, button.Active = "VALIDAR KEY", true
+    button.Text, button.Active = "VALIDAR E ENTRAR", true
 end
+
 local busy = false
 local Controller = {}
 Controller.__index = Controller
