@@ -41,6 +41,19 @@ function Policy.classify(status, reply)
     if status == 0 or status == 429 or status >= 500 then return "retry" end
     return "stop"
 end
+function Policy.savedKey(cache, gameId)
+    if type(cache) ~= "table" then return nil end
+    local candidates = {}
+    local function add(value) if type(value) == "string" then table.insert(candidates, value) end end
+    if type(cache.byGame) == "table" then add(cache.byGame[tostring(gameId)]) end
+    if tostring(gameId) == "7074860883" then add(cache.key) end
+    add(cache.lastKey) add(cache.key)
+    for _, value in ipairs(candidates) do
+        local key = value:gsub("%s", ""):upper()
+        if key:match("^%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x$") then return key end
+    end
+    return nil
+end
 return Policy
 
 end)()
@@ -214,6 +227,10 @@ function Controller:getLicenseRemaining()
     end
     return nil, "unknown"
 end
+-- LOADER TRANSPORT: bounded waits, discarded late replies, no credentials in diagnostics.
+local function loaderPresent()
+    return gui.Parent ~= nil and env.__StudyHubKeyGui == gui
+end
 function Controller:setAutoExecute(enabled)
     if self.hubId == "arise" then error("Use a opcao Misc da hub Arise") end
     assert(self:isValid(), "Sessao encerrada")
@@ -230,11 +247,21 @@ function Controller:setAutoExecute(enabled)
     if oldSession and oldSession.connection then oldSession.connection:Disconnect() end
     env.__AriseAutoSession = nil
 end
-local function post(route, body)
+local function post(route, body, canContinue)
     local startedAt = os.clock()
-    local ok, response = pcall(requestHttp, {Url = BASE .. route, Method = "POST",
-        Headers = {["Content-Type"] = "application/json", Accept = "application/json, text/plain"},
-        Body = Http:JSONEncode(body)})
+    local done, abandoned, ok, response = false, false, nil, nil
+    local worker = task.spawn(function()
+        local success, value = pcall(requestHttp, {Url = BASE .. route, Method = "POST",
+            Headers = {["Content-Type"] = "application/json", Accept = "application/json, text/plain"},
+            Body = Http:JSONEncode(body)})
+        if not abandoned then ok, response, done = success, value, true end
+    end)
+    while not done and os.clock() - startedAt < 40 and loaderPresent() and (not canContinue or canContinue()) do task.wait(0.1) end
+    if not done then
+        abandoned = true
+        pcall(task.cancel, worker)
+        return 0, {erro = "REDE_TIMEOUT"}, nil, startedAt
+    end
     if not ok or type(response) ~= "table" then return 0, nil, nil, startedAt end
     local code = tonumber(response.StatusCode or response.Status) or 0
     local raw = response.Body
@@ -243,8 +270,14 @@ local function post(route, body)
         local parsed, value = pcall(function() return Http:JSONDecode(raw) end)
         if parsed and type(value) == "table" then decoded = value end
     end
-    return code, decoded, raw, startedAt
+    if code == 200 and route ~= "/v1/script" and type(decoded) ~= "table" then
+        return 0, {erro = "RESPOSTA_INVALIDA"}, nil, startedAt
+    end
+    local headers = response.Headers or {}
+    local retryAfter = tonumber(headers["Retry-After"] or headers["retry-after"])
+    return code, decoded, raw, startedAt, retryAfter
 end
+-- END LOADER TRANSPORT
 local messages = {
     KEY_INVALIDA = "Key invalida.", KEY_REVOGADA = "Key revogada.", KEY_EXPIRADA = "Sua key expirou.",
     DISPOSITIVO_INVALIDO = "Key vinculada a outro dispositivo. Use /resethwid no Discord.",
@@ -253,10 +286,60 @@ local messages = {
     JOGO_NAO_SUPORTADO = "Este jogo ainda nao tem uma hub cadastrada e ativa.",
     HUB_SEM_ACESSO = "Sua key nao inclui acesso a esta hub. Consulte a equipe no Discord.",
     FALHA_AO_SALVAR = "O servidor nao conseguiu salvar. Tente novamente em instantes.",
+    REDE_TIMEOUT = "O servidor demorou para responder. Tente validar novamente.",
+    RESPOSTA_INVALIDA = "Resposta temporariamente invalida do servidor. Tente novamente.",
 }
 local function problem(reply, fallback)
     return type(reply) == "table" and messages[reply.erro] or fallback
 end
+-- LOADER STARTUP: retry only transient failures, never expiry/revocation/device changes.
+local function startupPost(route, body, canContinue)
+    local began = os.clock()
+    local stages = {["/v1/jogo"] = "Identificando o jogo", ["/v1/ativar"] = "Validando a key", ["/v1/script"] = "Carregando a hub"}
+    local lastCode, lastReply, lastRaw, lastStart = 0, nil, nil, began
+    local function allowed() return loaderPresent() and (not canContinue or canContinue()) end
+    for attempt = 1, 3 do
+        if not allowed() then break end
+        env.__StudyHubLoaderStatus = {stage = route, attempt = attempt}
+        status.Text = (stages[route] or "Conectando") .. " · tentativa " .. attempt .. "/3..."
+        local code, reply, raw, started, retryAfter = post(route, body, allowed)
+        lastCode, lastReply, lastRaw, lastStart = code, reply, raw, started
+        if not allowed() then break end
+        env.__StudyHubLoaderStatus.status = code
+        if Policy.classify(code, reply) ~= "retry" or attempt == 3 then return code, reply, raw, started end
+        local pause = code == 429 and math.max(60, retryAfter or 60) or attempt * 3
+        if os.clock() + pause - began >= 150 then break end
+        local untilAt = os.clock() + pause
+        while allowed() and os.clock() < untilAt do
+            status.Text = "Conexao temporariamente indisponivel. Nova tentativa em " .. math.ceil(untilAt - os.clock()) .. " s..."
+            task.wait(0.25)
+        end
+    end
+    return lastCode, lastReply, lastRaw, lastStart
+end
+local function waitForGameReady()
+    if game.GameId ~= 7074860883 then return true end
+    local deadline = os.clock() + 90
+    while loaderPresent() and os.clock() < deadline do
+        local storage = game:GetService("ReplicatedStorage")
+        local modules = storage:FindFirstChild("SharedModules")
+        local indexer = storage:FindFirstChild("Indexer")
+        local scripts = player:FindFirstChild("PlayerScripts")
+        local ui = scripts and scripts:FindFirstChild("NewUI", true)
+        local character = player.Character
+        local enemies = modules and modules:FindFirstChild("Enemies")
+        local ready = modules and modules:FindFirstChild("WeaponsModule") and modules:FindFirstChild("ClientData")
+            and enemies and enemies:FindFirstChild("EnemyLocal") and storage:FindFirstChild("BridgeNet2")
+            and indexer and indexer:FindFirstChild("StatsInfo") and indexer:FindFirstChild("BalanceInfo")
+            and ui and ui:FindFirstChild("Screens") and character and character:FindFirstChild("HumanoidRootPart")
+            and player:GetAttribute("Loaded") ~= false and not player.GameplayPaused
+        if ready then return true end
+        status.Text = "Aguardando o jogo e o personagem carregarem..."
+        task.wait(0.5)
+    end
+    return false
+end
+-- END LOADER STARTUP
 local function launch(key)
     if busy then return end
     busy = true
@@ -274,13 +357,14 @@ local function launch(key)
     end)
     if not setupOK then busy = false show(tostring(setup)) return end
     local device = setup
-    local resolveCode, resolved = post("/v1/jogo", {gameId = tostring(game.GameId)})
+    if not waitForGameReady() then busy = false show("O jogo ainda nao terminou de carregar. Tente validar novamente.") return end
+    local resolveCode, resolved = startupPost("/v1/jogo", {gameId = tostring(game.GameId)})
     if resolveCode ~= 200 or type(resolved) ~= "table" or resolved.protocolo ~= 2 or type(resolved.hub) ~= "table" then
         busy = false
         show(problem(resolved, "Atualize o servidor para a versao MultiJogos ou tente novamente."))
         return
     end
-    local code, reply, _, startedAt = post("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device, gameId = tostring(game.GameId)})
+    local code, reply, _, startedAt = startupPost("/v1/ativar", {key = key, userId = tostring(player.UserId), dispositivo = device, gameId = tostring(game.GameId)})
     if not gui.Parent then busy = false return end
     local c = setmetatable({active = true, deadline = 0, renewAt = 0, device = device,
         gameId = tostring(game.GameId), hubId = resolved.hub.id}, Controller)
@@ -309,7 +393,7 @@ local function launch(key)
             task.wait(0.25)
             if not c:isValid() then break end
             if os.clock() >= c.renewAt then
-                local httpCode, data, _, began = post("/v1/renovar", {sessao = c.token, dispositivo = device})
+                local httpCode, data, _, began = post("/v1/renovar", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
                 if not c:isValid() then break end
                 local result = Policy.classify(httpCode, data)
                 if result == "success" and c:accept(data, began) then
@@ -320,10 +404,14 @@ local function launch(key)
         end
     end)
     status.Text = "Licenca validada. Carregando a hub..."
-    local scriptCode, scriptReply, source = post("/v1/script", {sessao = c.token, dispositivo = device})
+    local scriptCode, scriptReply, source = startupPost("/v1/script", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
     if not c:isValid() then busy = false return end
-    if scriptCode ~= 200 or type(source) ~= "string" or not source:find("-- STUDYHUB-LICENSED-1", 1, true) then
-        c:stop(problem(scriptReply, "Publique o runtime licenciado no servidor. O codigo atual ainda nao e compativel."))
+    if scriptCode ~= 200 then
+        c:stop(problem(scriptReply, "Nao foi possivel baixar a hub. Verifique a conexao e tente novamente."))
+        busy = false return
+    end
+    if type(source) ~= "string" or not source:find("-- STUDYHUB-LICENSED-1", 1, true) then
+        c:stop("Publique o runtime licenciado no servidor. O codigo atual ainda nao e compativel.")
         busy = false return
     end
     local fn = loadstring(source, "StudyHubLicensed")
@@ -371,12 +459,14 @@ gui.Destroying:Connect(function()
     local c = env.__StudyHubLicense
     if c then c:stop(nil, true) end
 end)
-local cached = readJson("AriseStudyHub/license.json")
-local cachedKey = cached and type(cached.byGame) == "table" and cached.byGame[tostring(game.GameId)]
-if not cachedKey and game.GameId == 7074860883 then cachedKey = cached and cached.key end
-if not cachedKey then cachedKey = cached and (cached.lastKey or cached.key) end
-if type(cachedKey) == "string" then input.Text = cachedKey end
-if resume == true and type(cachedKey) == "string" then task.spawn(submit) end
+local cachedKey = Policy.savedKey(readJson("AriseStudyHub/license.json"), game.GameId)
+if cachedKey then
+    input.Text = cachedKey
+    status.Text = "Key salva encontrada. Validando automaticamente..."
+    task.defer(submit)
+elseif resume == true then
+    status.Text = "Nao foi possivel ler uma key salva. Cole a key para continuar."
+end
 ]=====]
 writefile("AriseStudyHub/Loader.luau",source)
 writefile("AriseStudyHub/AutoExecute.luau",[====[
