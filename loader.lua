@@ -279,17 +279,19 @@ eye.Activated:Connect(function()
 end)
 local discord = create("TextButton", panel, {Position = UDim2.fromOffset(156, 391), Size = UDim2.fromOffset(148, 28),
     Text = "", BackgroundTransparency = 1})
-local discordIcon = create("Frame", discord, {Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(24, 16),
-    BackgroundColor3 = Color3.fromRGB(116, 137, 247), BorderSizePixel = 0})
-round(discordIcon, 6)
-for _, x in ipairs({6, 15}) do
-    local dot = create("Frame", discordIcon, {Position = UDim2.fromOffset(x, 6), Size = UDim2.fromOffset(4, 5),
-        BackgroundColor3 = Color3.fromRGB(7, 20, 33), BorderSizePixel = 0})
-    round(dot, 4)
-end
 local discordArt = artwork(discord, "DiscordIcon", "134120255785711", 2, 0, 32, 28)
-hideFallbackWhenLoaded(discordArt, discordIcon)
-label(discord, "Obter key", 37, 0, 105, 28, 13, cyan, true)
+-- The uploaded asset has a public thumbnail even when raw image delivery is restricted.
+discordArt.Image = "rbxthumb://type=Asset&id=134120255785711&w=150&h=150"
+local discordCaption = label(discord, "Discord · Obter key", 0, 0, 148, 28, 13, cyan, true)
+local function refreshDiscordIcon()
+    local loaded = discordArt.IsLoaded == true
+    discordArt.Visible = loaded
+    discordCaption.Text = loaded and "Obter key" or "Discord · Obter key"
+    discordCaption.Position = UDim2.fromOffset(loaded and 37 or 0, 0)
+    discordCaption.Size = UDim2.fromOffset(loaded and 105 or 148, 28)
+end
+discordArt:GetPropertyChangedSignal("IsLoaded"):Connect(refreshDiscordIcon)
+refreshDiscordIcon()
 local DISCORD_INVITE = "https://discord.gg/g8bEFs2Pee"
 discord.Activated:Connect(function()
     local opened = pcall(function() game:GetService("GuiService"):OpenBrowserWindow(DISCORD_INVITE) end)
