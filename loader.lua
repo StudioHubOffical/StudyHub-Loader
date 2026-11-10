@@ -604,8 +604,38 @@ local function launch(key, automatic)
         c:stop("Publique o runtime licenciado no servidor. O codigo atual ainda nao e compativel.")
         busy = false return
     end
-    local fn = loadstring(source, "StudyHubLicensed")
-    if not fn then c:stop("O script recebido tem erro de compilacao.") busy = false return end
+    -- Compile before executing. A failed download is retried, never executed partially.
+    local fn, compileProblem
+    for compileAttempt = 1, 3 do
+        if not c:isValid() then busy = false return end
+        local ok, result, diagnostic = pcall(loadstring, source, "StudyHubLicensed")
+        if ok and type(result) == "function" then fn = result break end
+        compileProblem = tostring(ok and diagnostic or result):sub(1, 1200)
+        warn("[StudyHub] Runtime compile attempt " .. compileAttempt .. ": " .. compileProblem)
+        pcall(function()
+            writefile("AriseStudyHub/loader-error.json", Http:JSONEncode({stage = "compile", attempt = compileAttempt,
+                placeId = game.PlaceId, gameId = game.GameId, utc = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                bytes = #source, message = compileProblem}))
+        end)
+        if compileAttempt >= 3 then break end
+        local untilAt = os.clock() + compileAttempt * 5
+        status.Text = "Falha ao compilar a hub. Baixando novamente · tentativa " .. (compileAttempt + 1) .. "/3…"
+        while c:isValid() and os.clock() < untilAt do task.wait(0.25) end
+        if not c:isValid() then busy = false return end
+        scriptCode, scriptReply, source = startupPost("/v1/script", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
+        if c:isValid() and Policy.classify(scriptCode, scriptReply) == "reauth" and recoverSession(c) then
+            scriptCode, scriptReply, source = startupPost("/v1/script", {sessao = c.token, dispositivo = device}, function() return c:isValid() end)
+        end
+        if not c:isValid() then busy = false return end
+        if scriptCode ~= 200 then c:stop(problem(scriptReply, "Falha ao baixar novamente a hub. Confira a conexao.")) busy = false return end
+        if type(source) ~= "string" or not source:find("-- STUDYHUB-LICENSED-1", 1, true) then
+            c:stop("Resposta recebida nao e um runtime licenciado. Confira a publicacao no servidor.") busy = false return
+        end
+    end
+    if not fn then
+        c:stop("A hub recebida continua com erro de compilacao apos 3 tentativas. Detalhes: AriseStudyHub/loader-error.json.")
+        busy = false return
+    end
     local saved = pcall(function()
         local cache = readJson("AriseStudyHub/license.json") or {}
         cache.byGame = type(cache.byGame) == "table" and cache.byGame or {}
