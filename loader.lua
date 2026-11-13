@@ -2,7 +2,7 @@
 assert(type(readfile)=="function" and type(writefile)=="function", "Executor sem arquivos locais")
 if type(makefolder)=="function" then pcall(makefolder,"AriseStudyHub") end
 local source=[=====[
--- Study Hub licensed loader. No Discord/GitHub/admin secrets belong in this file.
+-- Vykron Hub licensed loader. No Discord/GitHub/admin secrets belong in this file.
 local resume = ...
 if not game:IsLoaded() then game.Loaded:Wait() end
 local Players = game:GetService("Players")
@@ -11,7 +11,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 while not player do task.wait() player = Players.LocalPlayer end
 local env = getgenv()
-local BASE = "https://key-server-9pry.onrender.com"
+local BASE = "https://api.vykronhub.com"
 local Policy = (function()
 local Policy = {}
 function Policy.accept(reply, startedAt, now)
@@ -207,7 +207,7 @@ round(logo, 10)
 local logoFallback = label(logo, "S", 0, 0, 44, 44, 31, cyan, true)
 local logoArt = artwork(logo, "StudyHubLogo", "128145399327530", 0, 0, 44, 44)
 hideFallbackWhenLoaded(logoArt, logoFallback)
-local title = label(panel, "STUDY HUB", 82, 23, 210, 25, 21, nil, true)
+local title = label(panel, "VYKRON HUB", 82, 23, 210, 25, 21, nil, true)
 title.TextXAlignment = Enum.TextXAlignment.Left
 local subtitle = label(panel, "A C E S S O", 83, 49, 200, 15, 10, muted)
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -218,11 +218,11 @@ round(close, 8)
 close.Activated:Connect(function() gui:Destroy() end)
 create("Frame", panel, {Position = UDim2.fromOffset(24, 83), Size = UDim2.fromOffset(412, 1),
     BackgroundColor3 = Color3.fromRGB(28, 58, 76), BorderSizePixel = 0})
-local gameBadge = label(panel, game.GameId == 7074860883 and "ARISE CROSSOVER" or "STUDY HUB · MULTIJOGOS", 130, 101, 200, 24, 11, cyan, true)
+local gameBadge = label(panel, game.GameId == 7074860883 and "ARISE CROSSOVER" or "VYKRON HUB · MULTIJOGOS", 130, 101, 200, 24, 11, cyan, true)
 gameBadge.BackgroundTransparency = 0
 gameBadge.BackgroundColor3 = Color3.fromRGB(10, 39, 52)
 round(gameBadge, 6)
-label(panel, "Bem-vindo à Study Hub", 24, 141, 412, 30, 23, nil, true)
+label(panel, "Bem-vindo à Vykron Hub", 24, 141, 412, 30, 23, nil, true)
 label(panel, "Valide sua key para acessar a hub.", 24, 179, 412, 22, 13, muted)
 local inputBox = create("Frame", panel, {Position = UDim2.fromOffset(24, 222), Size = UDim2.fromOffset(412, 52),
     BackgroundColor3 = Color3.fromRGB(12, 34, 51), BorderSizePixel = 0})
@@ -511,7 +511,7 @@ local function recoverSession(c)
             if c.ready then gui.Enabled = false end
             return true
         end
-        if code == 404 then c:stop("Atualize o servidor no Render para habilitar a recuperacao automatica.") return false end
+        if code == 404 then c:stop("Atualize o servidor de keys para habilitar a recuperacao automatica.") return false end
         if Policy.classify(code, reply) ~= "retry" then
             c:stop(problem(reply, "Nao foi possivel recuperar a sessao. Valide manualmente.")) return false
         end
