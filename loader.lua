@@ -524,6 +524,47 @@ local function recoverSession(c)
 end
 -- END LOADER SESSION RECOVERY
 
+-- Install inside the existing licensed loader, after recoverSession and before launch.
+-- Optional methods: existing /v1/script behavior is unchanged.
+do
+    local function modulePost(self,route,body)
+        assert(self:isValid(),"Sessao encerrada")
+        body.sessao,body.dispositivo=self.token,self.device
+        local code,reply=startupPost(route,body,function()return self:isValid()end)
+        if self:isValid() and Policy.classify(code,reply)=="reauth" and recoverSession(self) then
+            body.sessao=self.token
+            code,reply=startupPost(route,body,function()return self:isValid()end)
+        end
+        assert(self:isValid(),"Sessao encerrada")
+        if code~=200 or type(reply)~="table" or reply.ok~=true or reply.protocolo~=2 then
+            if Policy.classify(code,reply)=="stop" and type(reply)=="table"
+                and (reply.erro=="KEY_EXPIRADA" or reply.erro=="KEY_REVOGADA" or reply.erro=="DISPOSITIVO_INVALIDO") then
+                self:stop(problem(reply,"Acesso encerrado"))
+            end
+            error(type(reply)=="table" and tostring(reply.erro or "MODULE_REQUEST_FAILED") or "MODULE_REQUEST_FAILED",0)
+        end
+        return reply
+    end
+    function Controller:moduleManifest(releaseId)
+        local requested=self.moduleRelease or releaseId
+        local reply=modulePost(self,"/v1/manifest",{releaseId=requested})
+        assert(type(reply.manifest)=="table" and (not requested or reply.manifest.releaseId==requested),"Manifest de outra versao")
+        self.moduleRelease=reply.manifest.releaseId
+        return reply.manifest
+    end
+    function Controller:moduleSource(moduleId,releaseId)
+        assert(type(moduleId)=="string" and releaseId==self.moduleRelease,"Manifest deve ser fixado primeiro")
+        -- No source disk cache: every module request is authorized by the server.
+        local ok,reply=pcall(modulePost,self,"/v1/module",{moduleId=moduleId,releaseId=releaseId})
+        if not ok and reply=="MANIFEST_NECESSARIO" then
+            self:moduleManifest(releaseId)
+            reply=modulePost(self,"/v1/module",{moduleId=moduleId,releaseId=releaseId})
+        elseif not ok then error(reply,0)end
+        assert(reply.moduleId==moduleId and reply.releaseId==releaseId,"Resposta de modulo incompatível")
+        return reply
+    end
+end
+
 local function launch(key, automatic)
     if busy then return end
     busy = true
