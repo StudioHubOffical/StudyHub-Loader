@@ -159,7 +159,8 @@ local gui = Instance.new("ScreenGui")
 gui.Name, gui.ResetOnSpawn, gui.DisplayOrder = "StudyHubKey", false, 11000
 -- Decide whether to show before parenting: saved-key checks must not flash on screen.
 gui.Enabled = false
-gui.Parent = (gethui and gethui()) or player:WaitForChild("PlayerGui")
+-- VYKRON-ATTACH-UI-FIX-1: ordinary player-owned GUI; no elevated capability required.
+gui.Parent = player:WaitForChild("PlayerGui")
 env.__StudyHubKeyGui = gui
 local cyan = Color3.fromRGB(0, 213, 222)
 local muted = Color3.fromRGB(140, 164, 183)
@@ -324,6 +325,11 @@ function Controller:attach(callback)
     assert(self:isValid(), "Licenca sem sessao valida")
     assert(type(callback) == "function", "Runtime sem encerramento valido")
     self.destroyHub = callback
+    -- Attach the newly registered runtime, not the retired monolithic handle.
+    local registeredHub = env.__AriseStudyHub
+    if type(registeredHub) == "table" and type(registeredHub.destroy) == "function" then
+        self.boundHub, self.hubSlot = registeredHub, "__AriseStudyHub"
+    end
     -- A runtime may keep running after registering its UI and cleanup handle.
     -- Readiness is independent from the return of the downloaded main function.
     if not self.ready then
@@ -693,11 +699,40 @@ local function launch(key, automatic)
     -- Only needed by the hub's existing capability check. Never store the downloaded runtime locally.
     writefile("AriseStudyHub/Hub.luau", '-- Runtime servido exclusivamente pelo loader.\nerror("Use StudyHub_Loader.luau")')
     c.launchThread = task.spawn(function()
-        local ok = pcall(fn)
+        -- VYKRON-RUNTIME-DIAGNOSTIC-1: do not discard the startup error.
+        local ok, runtimeProblem = xpcall(fn, function(value)
+            local message = tostring(value)
+            if debug and type(debug.traceback) == "function" then
+                local traced, result = pcall(debug.traceback, message, 2)
+                if traced and type(result) == "string" then return result end
+            end
+            return message
+        end)
+        local diagnostic
+        if not ok then
+            diagnostic = tostring(runtimeProblem)
+            for _, secret in pairs({key, device, c.token, c.device}) do
+                if type(secret) == "string" and #secret > 0 then
+                    local pattern = secret:gsub("(%W)", "%%%1")
+                    diagnostic = diagnostic:gsub(pattern, function() return "[REDACTED]" end)
+                end
+            end
+            diagnostic = diagnostic:gsub("%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x", "[KEY REDACTED]"):sub(1, 4000)
+            warn("[Vykron] Runtime initialization failed: " .. diagnostic)
+            pcall(function()
+                writefile("AriseStudyHub/loader-error.json", Http:JSONEncode({
+                    stage = "runtime", version = "VYKRON-RUNTIME-DIAGNOSTIC-1",
+                    placeId = game.PlaceId, gameId = game.GameId,
+                    releaseId = c.moduleRelease, bytes = #source,
+                    utc = os.date("!%Y-%m-%dT%H:%M:%SZ"), message = diagnostic
+                }))
+            end)
+        end
         if not c.active then return end
         if c:isValid() then bindOriginal() end
         if not ok then
-            c:stop("A hub nao iniciou corretamente. Confira o runtime publicado.")
+            local firstLine = diagnostic:match("^[^\r\n]+") or "Unknown runtime error"
+            c:stop("Erro ao iniciar: " .. firstLine:sub(1, 180) .. " | Detalhes: AriseStudyHub/loader-error.json")
         elseif c.ready and c:isValid() then gui.Enabled = false end
         if c.ready or not c.active then busy = false end
     end)
