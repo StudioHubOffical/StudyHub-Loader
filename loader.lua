@@ -556,6 +556,14 @@ do
         local reply=modulePost(self,"/v1/manifest",{releaseId=requested})
         assert(type(reply.manifest)=="table" and (not requested or reply.manifest.releaseId==requested),"Manifest de outra versao")
         self.moduleRelease=reply.manifest.releaseId
+        -- VYKRON-MODULE-PROGRESS-1: keep first startup visible until attach succeeds.
+        self.moduleDownloadSeen=self.moduleDownloadSeen or {}
+        self.moduleDownloadCount=self.moduleDownloadCount or 0
+        self.moduleDownloadTotal=#reply.manifest.modules
+        if not self.ready then
+            gui.Enabled=true
+            status.Text="Carregando modulos: "..self.moduleDownloadCount.."/"..self.moduleDownloadTotal.."..."
+        end
         return reply.manifest
     end
     function Controller:moduleSource(moduleId,releaseId)
@@ -567,6 +575,15 @@ do
             reply=modulePost(self,"/v1/module",{moduleId=moduleId,releaseId=releaseId})
         elseif not ok then error(reply,0)end
         assert(reply.moduleId==moduleId and reply.releaseId==releaseId,"Resposta de modulo incompatível")
+        if not self.ready then
+            self.moduleDownloadSeen=self.moduleDownloadSeen or {}
+            if not self.moduleDownloadSeen[moduleId]then
+                self.moduleDownloadSeen[moduleId]=true
+                self.moduleDownloadCount=(self.moduleDownloadCount or 0)+1
+            end
+            gui.Enabled=true
+            status.Text="Carregando modulos: "..tostring(self.moduleDownloadCount or 0).."/"..tostring(self.moduleDownloadTotal or "?").."..."
+        end
         return reply
     end
 end
